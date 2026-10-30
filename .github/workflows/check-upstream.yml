@@ -1,0 +1,83 @@
+name: Check Upstream Releases (Caddy)
+
+on:
+  schedule:
+    # Run daily at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Check Upstream Caddy Release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - << 'EOF'
+          import json, os, subprocess, urllib.request
+
+          subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+
+          def commit_if_changed(files, message):
+              for f in files:
+                  subprocess.run(["git", "add", f], check=True)
+              status = subprocess.check_output(["git", "status", "--porcelain"]).decode().strip()
+              if status:
+                  subprocess.run(["git", "commit", "-m", message], check=True)
+                  return True
+              return False
+
+          # Check Caddy upstream releases
+          curr_caddy = ""
+          if os.path.exists(".caddy-version"):
+              with open(".caddy-version") as f:
+                  curr_caddy = f.read().strip()
+
+          gh_token = os.environ.get("GH_TOKEN", "")
+          headers = {"User-Agent": "Python"}
+          if gh_token:
+              headers["Authorization"] = f"Bearer {gh_token}"
+
+          req = urllib.request.Request("https://api.github.com/repos/caddyserver/caddy/releases/latest", headers=headers)
+          latest_caddy = ""
+          try:
+              data = json.loads(urllib.request.urlopen(req).read().decode())
+              latest_caddy = data.get("tag_name", "")
+          except Exception as e:
+              print(f"Error fetching Caddy release: {e}")
+
+          print(f"Current Caddy: {curr_caddy} | Upstream Caddy: {latest_caddy}")
+          if latest_caddy and latest_caddy != curr_caddy:
+              print(f"New Caddy release detected: {latest_caddy}! Updating...")
+              with open(".caddy-version", "w") as f:
+                  f.write(latest_caddy + "\n")
+              commit_if_changed([".caddy-version"], f"ci(caddy): bump upstream Caddy to {latest_caddy}")
+
+              existing_tags = subprocess.check_output(["git", "tag"]).decode().splitlines()
+              if latest_caddy not in existing_tags:
+                  subprocess.run(["git", "tag", "-a", latest_caddy, "-m", f"Release {latest_caddy} (Upstream Caddy)"], check=True)
+
+              subprocess.run(["git", "push", "origin", "main"], check=True)
+              if latest_caddy not in existing_tags:
+                  subprocess.run(["git", "push", "origin", latest_caddy], check=True)
+          else:
+              print("Caddy is up to date.")
+          EOF

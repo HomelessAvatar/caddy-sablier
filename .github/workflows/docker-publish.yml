@@ -1,0 +1,100 @@
+name: Build and Publish Caddy Sablier Image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Target Caddy version/tag (e.g. v2.11.7)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      target_tag:
+        type: string
+        required: false
+        default: ''
+  schedule:
+    # Rebuild weekly on Mondays at 03:00 UTC for latest base image & security patches
+    - cron: '0 3 * * 1'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_tag != '' && format('refs/tags/{0}', inputs.target_tag) || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Caddy version
+        id: caddy_version
+        run: |
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v? ]]; then
+            VER="${GITHUB_REF#refs/tags/}"
+            echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.target_tag }}" ]; then
+            VER="${{ inputs.target_tag }}"
+            echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+          else
+            VER="2.11.7"
+            [ -f .caddy-version ] && VER=$(cat .caddy-version | tr -d '[:space:]' | sed 's/^v//')
+            echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=ref,event=tag
+            type=raw,value=${{ inputs.target_tag }},enable=${{ inputs.target_tag != '' }}
+            type=raw,value=v${{ steps.caddy_version.outputs.version }}
+            type=raw,value=${{ steps.caddy_version.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            CADDY_VERSION=${{ steps.caddy_version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
