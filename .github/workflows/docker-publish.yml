@@ -54,20 +54,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine Caddy version
-        id: caddy_version
+      - name: Determine Versions
+        id: versions
         run: |
           if [[ "${{ github.ref }}" =~ ^refs/tags/v? ]]; then
             VER="${GITHUB_REF#refs/tags/}"
-            echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+            echo "caddy_version=${VER#v}" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ inputs.target_tag }}" ]; then
             VER="${{ inputs.target_tag }}"
-            echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+            echo "caddy_version=${VER#v}" >> "$GITHUB_OUTPUT"
           else
             VER="2.11.7"
             [ -f .caddy-version ] && VER=$(cat .caddy-version | tr -d '[:space:]' | sed 's/^v//')
-            echo "version=${VER}" >> "$GITHUB_OUTPUT"
+            echo "caddy_version=${VER}" >> "$GITHUB_OUTPUT"
           fi
+
+          PLUGIN_VER="v1.0.2"
+          [ -f .sablier-plugin-version ] && PLUGIN_VER=$(cat .sablier-plugin-version | tr -d '[:space:]')
+          echo "plugin_version=${PLUGIN_VER}" >> "$GITHUB_OUTPUT"
 
       - name: Extract Docker metadata
         id: meta
@@ -79,8 +83,8 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=${{ inputs.target_tag }},enable=${{ inputs.target_tag != '' }}
-            type=raw,value=v${{ steps.caddy_version.outputs.version }}
-            type=raw,value=${{ steps.caddy_version.outputs.version }}
+            type=raw,value=v${{ steps.versions.outputs.caddy_version }}
+            type=raw,value=${{ steps.versions.outputs.caddy_version }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -93,7 +97,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            CADDY_VERSION=${{ steps.caddy_version.outputs.version }}
+            CADDY_VERSION=${{ steps.versions.outputs.caddy_version }}
+            SABLIER_PLUGIN_VERSION=${{ steps.versions.outputs.plugin_version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -1,4 +1,4 @@
-name: Check Upstream Releases (Caddy)
+name: Check Upstream Releases (Caddy & Sablier Plugin)
 
 on:
   schedule:
@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Check Upstream Caddy Release
+      - name: Check Upstream Caddy and Sablier Plugin Releases
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -45,39 +45,67 @@ jobs:
                   return True
               return False
 
-          # Check Caddy upstream releases
-          curr_caddy = ""
-          if os.path.exists(".caddy-version"):
-              with open(".caddy-version") as f:
-                  curr_caddy = f.read().strip()
-
           gh_token = os.environ.get("GH_TOKEN", "")
           headers = {"User-Agent": "Python"}
           if gh_token:
               headers["Authorization"] = f"Bearer {gh_token}"
 
-          req = urllib.request.Request("https://api.github.com/repos/caddyserver/caddy/releases/latest", headers=headers)
-          latest_caddy = ""
-          try:
-              data = json.loads(urllib.request.urlopen(req).read().decode())
-              latest_caddy = data.get("tag_name", "")
-          except Exception as e:
-              print(f"Error fetching Caddy release: {e}")
+          def get_latest_release(repo):
+              url = f"https://api.github.com/repos/{repo}/releases/latest"
+              req = urllib.request.Request(url, headers=headers)
+              try:
+                  data = json.loads(urllib.request.urlopen(req).read().decode())
+                  return data.get("tag_name", "")
+              except Exception as e:
+                  print(f"Error fetching {repo}: {e}")
+                  return ""
 
+          # 1. Check Caddy (caddyserver/caddy)
+          curr_caddy = ""
+          if os.path.exists(".caddy-version"):
+              with open(".caddy-version") as f:
+                  curr_caddy = f.read().strip()
+
+          latest_caddy = get_latest_release("caddyserver/caddy")
           print(f"Current Caddy: {curr_caddy} | Upstream Caddy: {latest_caddy}")
+          caddy_updated = False
           if latest_caddy and latest_caddy != curr_caddy:
               print(f"New Caddy release detected: {latest_caddy}! Updating...")
               with open(".caddy-version", "w") as f:
                   f.write(latest_caddy + "\n")
               commit_if_changed([".caddy-version"], f"ci(caddy): bump upstream Caddy to {latest_caddy}")
+              caddy_updated = True
 
+          # 2. Check Sablier Caddy Plugin (sablierapp/sablier-caddy-plugin)
+          curr_plugin = ""
+          if os.path.exists(".sablier-plugin-version"):
+              with open(".sablier-plugin-version") as f:
+                  curr_plugin = f.read().strip()
+
+          latest_plugin = get_latest_release("sablierapp/sablier-caddy-plugin")
+          print(f"Current Sablier Plugin: {curr_plugin} | Upstream Sablier Plugin: {latest_plugin}")
+          plugin_updated = False
+          if latest_plugin and latest_plugin != curr_plugin:
+              print(f"New Sablier Caddy Plugin detected: {latest_plugin}! Updating...")
+              with open(".sablier-plugin-version", "w") as f:
+                  f.write(latest_plugin + "\n")
+              commit_if_changed([".sablier-plugin-version"], f"ci(sablier): bump upstream sablier-caddy-plugin to {latest_plugin}")
+              plugin_updated = True
+
+          # 3. Informational: Check Sablier Core Daemon
+          latest_core = get_latest_release("sablierapp/sablier")
+          print(f"Informational - Upstream Sablier Core Daemon: {latest_core}")
+
+          # Push changes & tags
+          diff_origin = subprocess.check_output(["git", "log", "origin/main..HEAD"]).decode().strip()
+          if diff_origin:
               existing_tags = subprocess.check_output(["git", "tag"]).decode().splitlines()
-              if latest_caddy not in existing_tags:
+              if caddy_updated and latest_caddy not in existing_tags:
                   subprocess.run(["git", "tag", "-a", latest_caddy, "-m", f"Release {latest_caddy} (Upstream Caddy)"], check=True)
 
               subprocess.run(["git", "push", "origin", "main"], check=True)
-              if latest_caddy not in existing_tags:
+              if caddy_updated and latest_caddy not in existing_tags:
                   subprocess.run(["git", "push", "origin", latest_caddy], check=True)
           else:
-              print("Caddy is up to date.")
+              print("Everything is up to date.")
           EOF
