@@ -6,7 +6,8 @@ FROM caddy:${CADDY_VERSION}-builder AS builder
 ARG SABLIER_PLUGIN_VERSION
 
 RUN xcaddy build \
-    --with github.com/sablierapp/sablier-caddy-plugin@${SABLIER_PLUGIN_VERSION}
+    --with github.com/sablierapp/sablier-caddy-plugin@${SABLIER_PLUGIN_VERSION} \
+    --with github.com/caddy-dns/cloudflare
 
 FROM caddy:${CADDY_VERSION}-alpine
 
